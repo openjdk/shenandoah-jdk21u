@@ -589,6 +589,7 @@ public:
 
   inline bool is_in(const void* p) const override;
 
+  // Returns true if the given oop belongs to a generation that is actively being collected.
   inline bool is_in_active_generation(oop obj) const;
   inline bool is_in_young(const void* p) const;
   inline bool is_in_old(const void* p) const;
