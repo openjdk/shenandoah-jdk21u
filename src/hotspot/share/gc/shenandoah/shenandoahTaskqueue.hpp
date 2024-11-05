@@ -34,6 +34,8 @@
 #include "runtime/mutex.hpp"
 #include "utilities/debug.hpp"
 
+class ShenandoahHeap;
+
 template<class E, MEMFLAGS F, unsigned int N = TASKQUEUE_SIZE>
 class BufferedOverflowTaskQueue: public OverflowTaskQueue<E, F, N>
 {
@@ -352,12 +354,6 @@ public:
 
   bool is_empty();
   void clear();
-
-#if TASKQUEUE_STATS
-  static void print_taskqueue_stats_hdr(outputStream* const st);
-  void print_taskqueue_stats() const;
-  void reset_taskqueue_stats();
-#endif // TASKQUEUE_STATS
 };
 
 class ShenandoahTerminatorTerminator : public TerminatorTerminator {
