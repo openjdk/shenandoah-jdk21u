@@ -386,6 +386,27 @@ void ShenandoahBarrierSetAssembler::load_at(MacroAssembler* masm,
   }
 }
 
+void ShenandoahBarrierSetAssembler::store_check(MacroAssembler* masm, Register obj) {
+  assert(ShenandoahCardBarrier, "Did you mean to enable ShenandoahCardBarrier?");
+
+  __ srli(obj, obj, CardTable::card_shift());
+
+  assert(CardTable::dirty_card_val() == 0, "must be");
+
+  __ load_byte_map_base(t1);
+  __ add(t1, obj, t1);
+
+  if (UseCondCardMark) {
+    Label L_already_dirty;
+    __ lbu(t0, Address(t1));
+    __ beqz(t0, L_already_dirty);
+    __ sb(zr, Address(t1));
+    __ bind(L_already_dirty);
+  } else {
+    __ sb(zr, Address(t1));
+  }
+}
+
 void ShenandoahBarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                                              Address dst, Register val, Register tmp1, Register tmp2, Register tmp3) {
   bool on_oop = is_reference_type(type);
@@ -526,6 +547,38 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
   }
 
   __ bind(done);
+}
+
+void ShenandoahBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssembler* masm, DecoratorSet decorators,
+                                                                     Register start, Register count, Register tmp, RegSet saved_regs) {
+  assert(ShenandoahCardBarrier, "Did you mean to enable ShenandoahCardBarrier?");
+
+  Label L_loop, L_done;
+  const Register end = count;
+
+  // Zero count? Nothing to do.
+  __ beqz(count, L_done);
+
+  // end = start + count << LogBytesPerHeapOop
+  // last element address to make inclusive
+  __ shadd(end, count, start, tmp, LogBytesPerHeapOop);
+  __ subi(end, end, BytesPerHeapOop);
+  __ srli(start, start, CardTable::card_shift());
+  __ srli(end, end, CardTable::card_shift());
+
+  // number of bytes to copy
+  __ sub(count, end, start);
+
+  Address curr_ct_holder_addr(xthread, in_bytes(ShenandoahThreadLocalData::card_table_offset()));
+  __ ld(tmp, curr_ct_holder_addr);
+  __ add(start, start, tmp);
+
+  __ bind(L_loop);
+  __ add(tmp, start, count);
+  __ sb(zr, Address(tmp));
+  __ subi(count, count, 1);
+  __ bgez(count, L_loop);
+  __ bind(L_done);
 }
 
 #undef __
