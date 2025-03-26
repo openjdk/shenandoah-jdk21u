@@ -808,6 +808,10 @@ void ShenandoahVerifier::verify_at_safepoint(const char* label,
         enabled = true;
         expected = ShenandoahHeap::HAS_FORWARDED;
         break;
+      case _verify_gcstate_updating:
+        enabled = true;
+        expected = ShenandoahHeap::HAS_FORWARDED | ShenandoahHeap::UPDATEREFS;
+        break;
       case _verify_gcstate_stable:
         enabled = true;
         expected = ShenandoahHeap::STABLE;
@@ -1112,7 +1116,7 @@ void ShenandoahVerifier::verify_before_updaterefs() {
           _verify_liveness_disable,    // no reliable liveness data anymore
           _verify_regions_notrash,     // trash regions have been recycled already
           _verify_size_exact,          // expect generation and heap sizes to match exactly
-          _verify_gcstate_forwarded    // evacuation should have produced some forwarded objects
+          _verify_gcstate_updating     // evacuation should have produced some forwarded objects
   );
 }
 
