@@ -616,7 +616,7 @@ private:
 public:
   bool is_maximal_no_gc() const override shenandoah_not_implemented_return(false);
 
-  inline bool is_in(const void* p) const override;
+  bool is_in(const void* p) const override;
 
   // Returns true if the given oop belongs to a generation that is actively being collected.
   inline bool is_in_active_generation(oop obj) const;

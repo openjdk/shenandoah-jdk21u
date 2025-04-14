@@ -342,12 +342,6 @@ uint ShenandoahHeap::get_object_age(oop obj) {
   return w.age();
 }
 
-bool ShenandoahHeap::is_in(const void* p) const {
-  HeapWord* heap_base = (HeapWord*) base();
-  HeapWord* last_region_end = heap_base + ShenandoahHeapRegion::region_size_words() * num_regions();
-  return p >= heap_base && p < last_region_end;
-}
-
 inline bool ShenandoahHeap::is_in_active_generation(oop obj) const {
   if (!mode()->is_generational()) {
     // everything is the same single generation
