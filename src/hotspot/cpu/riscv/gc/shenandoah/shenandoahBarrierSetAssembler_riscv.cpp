@@ -81,6 +81,13 @@ void ShenandoahBarrierSetAssembler::arraycopy_prologue(MacroAssembler* masm, Dec
   }
 }
 
+void ShenandoahBarrierSetAssembler::arraycopy_epilogue(MacroAssembler* masm, DecoratorSet decorators, bool is_oop,
+                                                       Register start, Register count, Register tmp, RegSet saved_regs) {
+  if (ShenandoahCardBarrier && is_oop) {
+    gen_write_ref_array_post_barrier(masm, decorators, start, count, tmp, saved_regs);
+  }
+}
+
 void ShenandoahBarrierSetAssembler::shenandoah_write_barrier_pre(MacroAssembler* masm,
                                                                  Register obj,
                                                                  Register pre_val,
@@ -112,18 +119,14 @@ void ShenandoahBarrierSetAssembler::satb_write_barrier_pre(MacroAssembler* masm,
   assert_different_registers(obj, pre_val, tmp1, tmp2);
   assert(pre_val != noreg && tmp1 != noreg && tmp2 != noreg, "expecting a register");
 
-  Address in_progress(thread, in_bytes(ShenandoahThreadLocalData::satb_mark_queue_active_offset()));
   Address index(thread, in_bytes(ShenandoahThreadLocalData::satb_mark_queue_index_offset()));
   Address buffer(thread, in_bytes(ShenandoahThreadLocalData::satb_mark_queue_buffer_offset()));
 
   // Is marking active?
-  if (in_bytes(SATBMarkQueue::byte_width_of_active()) == 4) {
-    __ lwu(tmp1, in_progress);
-  } else {
-    assert(in_bytes(SATBMarkQueue::byte_width_of_active()) == 1, "Assumption");
-    __ lbu(tmp1, in_progress);
-  }
-  __ beqz(tmp1, done);
+  Address gc_state(xthread, in_bytes(ShenandoahThreadLocalData::gc_state_offset()));
+  __ lbu(t1, gc_state);
+  __ test_bit(t1, t1, ShenandoahHeap::MARKING_BITPOS);
+  __ beqz(t1, done);
 
   // Do we need to load the previous value?
   if (obj != noreg) {
@@ -139,7 +142,7 @@ void ShenandoahBarrierSetAssembler::satb_write_barrier_pre(MacroAssembler* masm,
   __ ld(tmp1, index);                  // tmp := *index_adr
   __ beqz(tmp1, runtime);              // tmp == 0? If yes, goto runtime
 
-  __ sub(tmp1, tmp1, wordSize);        // tmp := tmp - wordSize
+  __ subi(tmp1, tmp1, wordSize);       // tmp := tmp - wordSize
   __ sd(tmp1, index);                  // *index_adr := tmp
   __ ld(tmp2, buffer);
   __ add(tmp1, tmp1, tmp2);            // tmp := tmp + *buffer_adr
@@ -393,7 +396,8 @@ void ShenandoahBarrierSetAssembler::store_check(MacroAssembler* masm, Register o
 
   assert(CardTable::dirty_card_val() == 0, "must be");
 
-  __ load_byte_map_base(t1);
+  Address curr_ct_holder_addr(xthread, in_bytes(ShenandoahThreadLocalData::card_table_offset()));
+  __ ld(t1, curr_ct_holder_addr);
   __ add(t1, obj, t1);
 
   if (UseCondCardMark) {
@@ -432,16 +436,12 @@ void ShenandoahBarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet 
                                val != noreg /* tosca_live */,
                                false /* expand_call */);
 
-  if (val == noreg) {
-    BarrierSetAssembler::store_at(masm, decorators, type, Address(tmp3, 0), noreg, noreg, noreg, noreg);
-  } else {
-    // Barrier needs uncompressed oop for region cross check.
-    Register new_val = val;
-    if (UseCompressedOops) {
-      new_val = t1;
-      __ mv(new_val, val);
-    }
-    BarrierSetAssembler::store_at(masm, decorators, type, Address(tmp3, 0), val, noreg, noreg, noreg);
+  BarrierSetAssembler::store_at(masm, decorators, type, Address(tmp3, 0), val, noreg, noreg, noreg);
+
+  bool in_heap = (decorators & IN_HEAP) != 0;
+  bool needs_post_barrier = (val != noreg) && in_heap && ShenandoahCardBarrier;
+  if (needs_post_barrier) {
+    store_check(masm, tmp3);
   }
 }
 
@@ -691,7 +691,7 @@ void ShenandoahBarrierSetAssembler::generate_c1_pre_barrier_runtime_stub(StubAss
   __ ld(tmp, queue_index);
   __ beqz(tmp, runtime);
 
-  __ sub(tmp, tmp, wordSize);
+  __ subi(tmp, tmp, wordSize);
   __ sd(tmp, queue_index);
   __ ld(t1, buffer);
   __ add(tmp, tmp, t1);
