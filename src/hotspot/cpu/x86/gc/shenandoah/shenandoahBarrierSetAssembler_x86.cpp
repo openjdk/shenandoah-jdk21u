@@ -940,7 +940,7 @@ void ShenandoahBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssemb
   const Register thread = tmp;
   __ get_thread(thread);
 
-  Address curr_ct_holder_addr(thread, in_bytes(ShenandoahThreadLocalData::byte_map_base_offset()));
+  Address curr_ct_holder_addr(thread, in_bytes(ShenandoahThreadLocalData::card_table_offset()));
   __ movptr(tmp, curr_ct_holder_addr);
 
   __ lea(end, Address(addr, count, Address::times_ptr, -wordSize));
