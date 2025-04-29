@@ -142,7 +142,7 @@ void ShenandoahBarrierSetAssembler::satb_write_barrier_pre(MacroAssembler* masm,
   __ ld(tmp1, index);                  // tmp := *index_adr
   __ beqz(tmp1, runtime);              // tmp == 0? If yes, goto runtime
 
-  __ subi(tmp1, tmp1, wordSize);       // tmp := tmp - wordSize
+  __ sub(tmp1, tmp1, wordSize);       // tmp := tmp - wordSize
   __ sd(tmp1, index);                  // *index_adr := tmp
   __ ld(tmp2, buffer);
   __ add(tmp1, tmp1, tmp2);            // tmp := tmp + *buffer_adr
@@ -562,7 +562,7 @@ void ShenandoahBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssemb
   // end = start + count << LogBytesPerHeapOop
   // last element address to make inclusive
   __ shadd(end, count, start, tmp, LogBytesPerHeapOop);
-  __ subi(end, end, BytesPerHeapOop);
+  __ sub(end, end, BytesPerHeapOop);
   __ srli(start, start, CardTable::card_shift());
   __ srli(end, end, CardTable::card_shift());
 
@@ -576,7 +576,7 @@ void ShenandoahBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssemb
   __ bind(L_loop);
   __ add(tmp, start, count);
   __ sb(zr, Address(tmp));
-  __ subi(count, count, 1);
+  __ sub(count, count, 1);
   __ bgez(count, L_loop);
   __ bind(L_done);
 }
@@ -691,7 +691,7 @@ void ShenandoahBarrierSetAssembler::generate_c1_pre_barrier_runtime_stub(StubAss
   __ ld(tmp, queue_index);
   __ beqz(tmp, runtime);
 
-  __ subi(tmp, tmp, wordSize);
+  __ sub(tmp, tmp, wordSize);
   __ sd(tmp, queue_index);
   __ ld(t1, buffer);
   __ add(tmp, tmp, t1);
