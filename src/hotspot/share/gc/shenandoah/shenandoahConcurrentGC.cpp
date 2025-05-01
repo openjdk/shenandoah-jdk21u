@@ -1035,7 +1035,7 @@ void ShenandoahConcurrentGC::op_weak_roots() {
     // on trashed regions could make an oop appear to be marked _after_ the
     // region has been recycled).
     ShenandoahTimingsTracker t(ShenandoahPhaseTimings::conc_weak_roots_rendezvous);
-    heap->rendezvous_threads();
+    heap->rendezvous_threads("Shenandoah Concurrent Weak Roots");
   }
 }
 
