@@ -67,12 +67,7 @@ private:
                                           Node* init_raw_mem);
 
   static void test_in_cset(Node*& ctrl, Node*& not_cset_ctrl, Node* val, Node* raw_mem, PhaseIdealLoop* phase);
-  static void move_gc_state_test_out_of_loop(IfNode* iff, PhaseIdealLoop* phase);
-  static void merge_back_to_back_tests(Node* n, PhaseIdealLoop* phase);
-  static bool merge_point_safe(Node* region);
-  static bool identical_backtoback_ifs(Node *n, PhaseIdealLoop* phase);
   static void fix_ctrl(Node* barrier, Node* region, const MemoryGraphFixer& fixer, Unique_Node_List& uses, Unique_Node_List& nodes_above_barrier, uint last, PhaseIdealLoop* phase);
-  static IfNode* find_unswitching_candidate(const IdealLoopTree *loop, PhaseIdealLoop* phase);
 
   static Node* get_load_addr(PhaseIdealLoop* phase, VectorSet& visited, Node* lrb);
 public:
@@ -84,7 +79,6 @@ public:
 
   static bool expand(Compile* C, PhaseIterGVN& igvn);
   static void pin_and_expand(PhaseIdealLoop* phase);
-  static void optimize_after_expansion(VectorSet& visited, Node_Stack& nstack, Node_List& old_new, PhaseIdealLoop* phase);
 
   static void push_data_inputs_at_control(PhaseIdealLoop* phase, Node* n, Node* ctrl,
                                           Unique_Node_List &wq);
@@ -94,23 +88,6 @@ public:
 #ifdef ASSERT
   static void verify(RootNode* root);
 #endif
-};
-
-class ShenandoahIUBarrierNode : public Node {
-public:
-  ShenandoahIUBarrierNode(Node* val);
-
-  const Type *bottom_type() const;
-  const Type* Value(PhaseGVN* phase) const;
-  Node* Identity(PhaseGVN* phase);
-
-  int Opcode() const;
-
-private:
-  enum { Needed, NotNeeded, MaybeNeeded };
-
-  static int needed(Node* n);
-  static Node* next(Node* n);
 };
 
 class MemoryGraphFixer : public ResourceObj {

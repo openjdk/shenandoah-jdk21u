@@ -55,9 +55,9 @@ public class TestObjItrWithHeapDump {
         }
 
         String[][][] modeHeuristics = new String[][][] {
-             {{"satb"},    {"adaptive", "compact", "static", "aggressive"}},
-             {{"iu"},      {"adaptive", "aggressive"}},
-             {{"passive"}, {"passive"}}
+             {{"satb"},         {"adaptive", "compact", "static", "aggressive"}},
+             {{"generational"}, {"adaptive"}},
+             {{"passive"},      {"passive"}}
         };
 
         for (String[][] mh : modeHeuristics) {

@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2020, 2022, Red Hat, Inc. All rights reserved.
+ * Copyright (c) 2020, Red Hat, Inc. All rights reserved.
+ * Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,55 +27,28 @@
 #include "gc/shenandoah/heuristics/shenandoahAdaptiveHeuristics.hpp"
 #include "gc/shenandoah/heuristics/shenandoahAggressiveHeuristics.hpp"
 #include "gc/shenandoah/heuristics/shenandoahCompactHeuristics.hpp"
+#include "gc/shenandoah/heuristics/shenandoahSpaceInfo.hpp"
 #include "gc/shenandoah/heuristics/shenandoahStaticHeuristics.hpp"
-#include "gc/shenandoah/mode/shenandoahIUMode.hpp"
-#include "logging/log.hpp"
-#include "logging/logTag.hpp"
-#include "runtime/globals_extension.hpp"
-#include "runtime/java.hpp"
+#include "gc/shenandoah/mode/shenandoahMode.hpp"
 
-void ShenandoahIUMode::initialize_flags() const {
-  if (FLAG_IS_CMDLINE(ClassUnloadingWithConcurrentMark) && ClassUnloading) {
-    log_warning(gc)("Shenandoah I-U mode sets -XX:-ClassUnloadingWithConcurrentMark; see JDK-8261341 for details");
-  }
-  FLAG_SET_DEFAULT(ClassUnloadingWithConcurrentMark, false);
-
-  if (ClassUnloading) {
-    FLAG_SET_DEFAULT(VerifyBeforeExit, false);
-  }
-
-  if (FLAG_IS_DEFAULT(ShenandoahIUBarrier)) {
-    FLAG_SET_DEFAULT(ShenandoahIUBarrier, true);
-  }
-  if (FLAG_IS_DEFAULT(ShenandoahSATBBarrier)) {
-    FLAG_SET_DEFAULT(ShenandoahSATBBarrier, false);
-  }
-
-  SHENANDOAH_ERGO_ENABLE_FLAG(ExplicitGCInvokesConcurrent);
-  SHENANDOAH_ERGO_ENABLE_FLAG(ShenandoahImplicitGCInvokesConcurrent);
-
-  // Final configuration checks
-  SHENANDOAH_CHECK_FLAG_SET(ShenandoahLoadRefBarrier);
-  SHENANDOAH_CHECK_FLAG_UNSET(ShenandoahSATBBarrier);
-  SHENANDOAH_CHECK_FLAG_SET(ShenandoahIUBarrier);
-  SHENANDOAH_CHECK_FLAG_SET(ShenandoahCASBarrier);
-  SHENANDOAH_CHECK_FLAG_SET(ShenandoahCloneBarrier);
-  SHENANDOAH_CHECK_FLAG_SET(ShenandoahStackWatermarkBarrier);
-}
-
-ShenandoahHeuristics* ShenandoahIUMode::initialize_heuristics() const {
+ShenandoahHeuristics* ShenandoahMode::initialize_heuristics(ShenandoahSpaceInfo* space_info) const {
   if (ShenandoahGCHeuristics == nullptr) {
     vm_exit_during_initialization("Unknown -XX:ShenandoahGCHeuristics option (null)");
   }
+
   if (strcmp(ShenandoahGCHeuristics, "aggressive") == 0) {
-    return new ShenandoahAggressiveHeuristics();
+    return new ShenandoahAggressiveHeuristics(space_info);
   } else if (strcmp(ShenandoahGCHeuristics, "static") == 0) {
-    return new ShenandoahStaticHeuristics();
+    return new ShenandoahStaticHeuristics(space_info);
   } else if (strcmp(ShenandoahGCHeuristics, "adaptive") == 0) {
-    return new ShenandoahAdaptiveHeuristics();
+    return new ShenandoahAdaptiveHeuristics(space_info);
   } else if (strcmp(ShenandoahGCHeuristics, "compact") == 0) {
-    return new ShenandoahCompactHeuristics();
+    return new ShenandoahCompactHeuristics(space_info);
+  } else {
+    vm_exit_during_initialization("Unknown -XX:ShenandoahGCHeuristics option");
   }
-  vm_exit_during_initialization("Unknown -XX:ShenandoahGCHeuristics option");
+
+  ShouldNotReachHere();
   return nullptr;
 }
+

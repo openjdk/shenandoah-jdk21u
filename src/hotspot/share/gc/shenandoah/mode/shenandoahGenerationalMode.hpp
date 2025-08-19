@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Red Hat, Inc. All rights reserved.
+ * Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,21 +22,18 @@
  *
  */
 
-#ifndef SHARE_GC_SHENANDOAH_MODE_SHENANDOAHIUMODE_HPP
-#define SHARE_GC_SHENANDOAH_MODE_SHENANDOAHIUMODE_HPP
+#ifndef SHARE_GC_SHENANDOAH_MODE_SHENANDOAHGENERATIONALMODE_HPP
+#define SHARE_GC_SHENANDOAH_MODE_SHENANDOAHGENERATIONALMODE_HPP
 
 #include "gc/shenandoah/mode/shenandoahMode.hpp"
 
-class ShenandoahHeuristics;
-
-class ShenandoahIUMode : public ShenandoahMode {
+class ShenandoahGenerationalMode : public ShenandoahMode {
 public:
   virtual void initialize_flags() const;
-  virtual ShenandoahHeuristics* initialize_heuristics() const;
-
-  virtual const char* name()     { return "Incremental-Update (IU)"; }
+  virtual const char* name()     { return "Generational"; }
   virtual bool is_diagnostic()   { return false; }
   virtual bool is_experimental() { return true; }
+  virtual bool is_generational() { return true; }
 };
 
-#endif // SHARE_GC_SHENANDOAH_MODE_SHENANDOAHIUMODE_HPP
+#endif // SHARE_GC_SHENANDOAH_MODE_SHENANDOAHGENERATIONALMODE_HPP
