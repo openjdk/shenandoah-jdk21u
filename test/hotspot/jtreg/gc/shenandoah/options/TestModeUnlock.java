@@ -44,9 +44,9 @@ public class TestModeUnlock {
     }
 
     public static void main(String[] args) throws Exception {
-        testWith("-XX:ShenandoahGCMode=satb",    Mode.PRODUCT);
-        testWith("-XX:ShenandoahGCMode=iu",      Mode.EXPERIMENTAL);
-        testWith("-XX:ShenandoahGCMode=passive", Mode.DIAGNOSTIC);
+        testWith("-XX:ShenandoahGCMode=satb",         Mode.PRODUCT);
+        testWith("-XX:ShenandoahGCMode=passive",      Mode.DIAGNOSTIC);
+        testWith("-XX:ShenandoahGCMode=generational", Mode.EXPERIMENTAL);
     }
 
     private static void testWith(String h, Mode mode) throws Exception {

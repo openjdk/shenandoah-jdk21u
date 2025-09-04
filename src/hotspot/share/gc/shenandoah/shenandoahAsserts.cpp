@@ -71,6 +71,9 @@ void ShenandoahAsserts::print_obj(ShenandoahMessageBuffer& msg, oop obj) {
   msg.append("    %3s marked strong\n",              ctx->is_marked_strong(obj) ? "" : "not");
   msg.append("    %3s marked weak\n",                ctx->is_marked_weak(obj) ? "" : "not");
   msg.append("    %3s in collection set\n",          heap->in_collection_set(obj) ? "" : "not");
+  if (heap->mode()->is_generational() && !obj->is_forwarded()) {
+    msg.append("  age: %d\n", obj->age());
+  }
   msg.append("  mark:%s\n", mw_ss.freeze());
   msg.append("  region: %s", ss.freeze());
 }
@@ -262,6 +265,25 @@ void ShenandoahAsserts::assert_correct(void* interior_loc, oop obj, const char* 
                     file, line);
     }
   }
+
+  // Do additional checks for special objects: their fields can hold metadata as well.
+  // We want to check class loading/unloading did not corrupt them.
+
+  if (obj_klass == vmClasses::Class_klass()) {
+    Metadata* klass = obj->metadata_field(java_lang_Class::klass_offset());
+    if (klass != nullptr && !Metaspace::contains(klass)) {
+      print_failure(_safe_all, obj, interior_loc, nullptr, "Shenandoah assert_correct failed",
+                    "Instance class mirror should point to Metaspace",
+                    file, line);
+    }
+
+    Metadata* array_klass = obj->metadata_field(java_lang_Class::array_klass_offset());
+    if (array_klass != nullptr && !Metaspace::contains(array_klass)) {
+      print_failure(_safe_all, obj, interior_loc, nullptr, "Shenandoah assert_correct failed",
+                    "Array class mirror should point to Metaspace",
+                    file, line);
+    }
+  }
 }
 
 void ShenandoahAsserts::assert_in_correct_region(void* interior_loc, oop obj, const char* file, int line) {
@@ -276,7 +298,7 @@ void ShenandoahAsserts::assert_in_correct_region(void* interior_loc, oop obj, co
   }
 
   size_t alloc_size = obj->size();
-  if (alloc_size > ShenandoahHeapRegion::humongous_threshold_words()) {
+  if (ShenandoahHeapRegion::requires_humongous(alloc_size)) {
     size_t idx = r->index();
     size_t num_regions = ShenandoahHeapRegion::required_regions(alloc_size * HeapWordSize);
     for (size_t i = idx; i < idx + num_regions; i++) {
@@ -397,7 +419,7 @@ void ShenandoahAsserts::assert_locked_or_shenandoah_safepoint(Mutex* lock, const
     return;
   }
 
-  ShenandoahMessageBuffer msg("Must ba at a Shenandoah safepoint or held %s lock", lock->name());
+  ShenandoahMessageBuffer msg("Must be at a Shenandoah safepoint or held %s lock", lock->name());
   report_vm_error(file, line, msg.buffer());
 }
 
@@ -430,10 +452,55 @@ void ShenandoahAsserts::assert_heaplocked_or_safepoint(const char* file, int lin
     return;
   }
 
-  if (ShenandoahSafepoint::is_at_shenandoah_safepoint() && Thread::current()->is_VM_thread()) {
+  if (ShenandoahSafepoint::is_at_shenandoah_safepoint()) {
     return;
   }
 
   ShenandoahMessageBuffer msg("Heap lock must be owned by current thread, or be at safepoint");
+  report_vm_error(file, line, msg.buffer());
+}
+
+void ShenandoahAsserts::assert_generational(const char* file, int line) {
+  if (ShenandoahHeap::heap()->mode()->is_generational()) {
+    return;
+  }
+
+  ShenandoahMessageBuffer msg("Must be in generational mode");
+  report_vm_error(file, line, msg.buffer());
+}
+
+void ShenandoahAsserts::assert_control_or_vm_thread_at_safepoint(bool at_safepoint, const char* file, int line) {
+  Thread* thr = Thread::current();
+  if (thr == ShenandoahHeap::heap()->control_thread()) {
+    return;
+  }
+  if (thr->is_VM_thread()) {
+    if (!at_safepoint) {
+      return;
+    } else if (SafepointSynchronize::is_at_safepoint()) {
+      return;
+    }
+  }
+
+  ShenandoahMessageBuffer msg("Must be either control thread, or vm thread");
+  if (at_safepoint) {
+    msg.append(" at a safepoint");
+  }
+  report_vm_error(file, line, msg.buffer());
+}
+
+void ShenandoahAsserts::assert_generations_reconciled(const char* file, int line) {
+  if (!SafepointSynchronize::is_at_safepoint()) {
+    return;
+  }
+
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+  ShenandoahGeneration* ggen = heap->gc_generation();
+  ShenandoahGeneration* agen = heap->active_generation();
+  if (agen == ggen) {
+    return;
+  }
+
+  ShenandoahMessageBuffer msg("Active(%d) & GC(%d) Generations aren't reconciled", agen->type(), ggen->type());
   report_vm_error(file, line, msg.buffer());
 }

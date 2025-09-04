@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018, 2022, Red Hat, Inc. All rights reserved.
+ * Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,6 +32,7 @@
 #include "gc/shenandoah/shenandoahRuntime.hpp"
 #include "gc/shenandoah/shenandoahThreadLocalData.hpp"
 #include "gc/shenandoah/heuristics/shenandoahHeuristics.hpp"
+#include "gc/shenandoah/mode/shenandoahMode.hpp"
 #include "interpreter/interpreter.hpp"
 #include "interpreter/interp_masm.hpp"
 #include "runtime/javaThread.hpp"
@@ -47,7 +49,7 @@ void ShenandoahBarrierSetAssembler::arraycopy_prologue(MacroAssembler* masm, Dec
                                                        Register src, Register dst, Register count, RegSet saved_regs) {
   if (is_oop) {
     bool dest_uninitialized = (decorators & IS_DEST_UNINITIALIZED) != 0;
-    if ((ShenandoahSATBBarrier && !dest_uninitialized) || ShenandoahIUBarrier || ShenandoahLoadRefBarrier) {
+    if ((ShenandoahSATBBarrier && !dest_uninitialized) || ShenandoahLoadRefBarrier) {
 
       Label done;
 
@@ -74,6 +76,13 @@ void ShenandoahBarrierSetAssembler::arraycopy_prologue(MacroAssembler* masm, Dec
       __ pop(saved_regs, sp);
       __ bind(done);
     }
+  }
+}
+
+void ShenandoahBarrierSetAssembler::arraycopy_epilogue(MacroAssembler* masm, DecoratorSet decorators, bool is_oop,
+                                                       Register start, Register count, Register tmp, RegSet saved_regs) {
+  if (ShenandoahCardBarrier && is_oop) {
+    gen_write_ref_array_post_barrier(masm, decorators, start, count, tmp, saved_regs);
   }
 }
 
@@ -305,14 +314,6 @@ void ShenandoahBarrierSetAssembler::load_reference_barrier(MacroAssembler* masm,
   __ leave();
 }
 
-void ShenandoahBarrierSetAssembler::iu_barrier(MacroAssembler* masm, Register dst, Register tmp) {
-  if (ShenandoahIUBarrier) {
-    __ push_call_clobbered_registers();
-    satb_write_barrier_pre(masm, noreg, dst, rthread, tmp, rscratch1, true, false);
-    __ pop_call_clobbered_registers();
-  }
-}
-
 //
 // Arguments:
 //
@@ -375,6 +376,27 @@ void ShenandoahBarrierSetAssembler::load_at(MacroAssembler* masm, DecoratorSet d
   }
 }
 
+void ShenandoahBarrierSetAssembler::store_check(MacroAssembler* masm, Register obj) {
+  assert(ShenandoahCardBarrier, "Should have been checked by caller");
+
+  __ lsr(obj, obj, CardTable::card_shift());
+
+  assert(CardTable::dirty_card_val() == 0, "must be");
+
+  Address curr_ct_holder_addr(rthread, in_bytes(ShenandoahThreadLocalData::card_table_offset()));
+  __ ldr(rscratch1, curr_ct_holder_addr);
+
+  if (UseCondCardMark) {
+    Label L_already_dirty;
+    __ ldrb(rscratch2, Address(obj, rscratch1));
+    __ cbz(rscratch2, L_already_dirty);
+    __ strb(zr, Address(obj, rscratch1));
+    __ bind(L_already_dirty);
+  } else {
+    __ strb(zr, Address(obj, rscratch1));
+  }
+}
+
 void ShenandoahBarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                                              Address dst, Register val, Register tmp1, Register tmp2, Register tmp3) {
   bool on_oop = is_reference_type(type);
@@ -403,14 +425,16 @@ void ShenandoahBarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet 
   if (val == noreg) {
     BarrierSetAssembler::store_at(masm, decorators, type, Address(tmp3, 0), noreg, noreg, noreg, noreg);
   } else {
-    iu_barrier(masm, val, tmp1);
-    // G1 barrier needs uncompressed oop for region cross check.
+    // Barrier needs uncompressed oop for region cross check.
     Register new_val = val;
     if (UseCompressedOops) {
       new_val = rscratch2;
       __ mov(new_val, val);
     }
     BarrierSetAssembler::store_at(masm, decorators, type, Address(tmp3, 0), val, noreg, noreg, noreg);
+    if (ShenandoahCardBarrier) {
+      store_check(masm, tmp3);
+    }
   }
 
 }
@@ -593,6 +617,36 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
   } else {
     __ cset(result, Assembler::EQ);
   }
+}
+
+void ShenandoahBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssembler* masm, DecoratorSet decorators,
+                                                                     Register start, Register count, Register scratch, RegSet saved_regs) {
+  assert(ShenandoahCardBarrier, "Should have been checked by caller");
+
+  Label L_loop, L_done;
+  const Register end = count;
+
+  // Zero count? Nothing to do.
+  __ cbz(count, L_done);
+
+  // end = start + count << LogBytesPerHeapOop
+  // last element address to make inclusive
+  __ lea(end, Address(start, count, Address::lsl(LogBytesPerHeapOop)));
+  __ sub(end, end, BytesPerHeapOop);
+  __ lsr(start, start, CardTable::card_shift());
+  __ lsr(end, end, CardTable::card_shift());
+
+  // number of bytes to copy
+  __ sub(count, end, start);
+
+  Address curr_ct_holder_addr(rthread, in_bytes(ShenandoahThreadLocalData::card_table_offset()));
+  __ ldr(scratch, curr_ct_holder_addr);
+  __ add(start, start, scratch);
+  __ bind(L_loop);
+  __ strb(zr, Address(start, count));
+  __ subs(count, count, 1);
+  __ br(Assembler::GE, L_loop);
+  __ bind(L_done);
 }
 
 #undef __

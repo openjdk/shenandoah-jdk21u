@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018, 2021, Red Hat, Inc. All rights reserved.
- * Copyright (c) 2012, 2021 SAP SE. All rights reserved.
+ * Copyright (c) 2012, 2022 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,6 +37,7 @@
 #include "gc/shenandoah/shenandoahRuntime.hpp"
 #include "gc/shenandoah/shenandoahThreadLocalData.hpp"
 #include "gc/shenandoah/heuristics/shenandoahHeuristics.hpp"
+#include "gc/shenandoah/mode/shenandoahMode.hpp"
 #include "interpreter/interpreter.hpp"
 #include "runtime/javaThread.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -61,20 +62,6 @@ void ShenandoahBarrierSetAssembler::satb_write_barrier(MacroAssembler *masm,
   }
 }
 
-void ShenandoahBarrierSetAssembler::iu_barrier(MacroAssembler *masm,
-                                               Register val,
-                                               Register tmp1, Register tmp2,
-                                               MacroAssembler::PreservationLevel preservation_level,
-                                               DecoratorSet decorators) {
-  // IU barriers are also employed to avoid resurrection of weak references,
-  // even if Shenandoah does not operate in incremental update mode.
-  if (ShenandoahIUBarrier || ShenandoahSATBBarrier) {
-    __ block_comment("iu_barrier (shenandoahgc) {");
-    satb_write_barrier_impl(masm, decorators, noreg, noreg, val, tmp1, tmp2, preservation_level);
-    __ block_comment("} iu_barrier (shenandoahgc)");
-  }
-}
-
 void ShenandoahBarrierSetAssembler::load_reference_barrier(MacroAssembler *masm, DecoratorSet decorators,
                                                            Register base, RegisterOrConstant ind_or_offs,
                                                            Register dst,
@@ -90,8 +77,6 @@ void ShenandoahBarrierSetAssembler::load_reference_barrier(MacroAssembler *masm,
 void ShenandoahBarrierSetAssembler::arraycopy_prologue(MacroAssembler *masm, DecoratorSet decorators, BasicType type,
                                                        Register src, Register dst, Register count,
                                                        Register preserve1, Register preserve2) {
-  __ block_comment("arraycopy_prologue (shenandoahgc) {");
-
   Register R11_tmp = R11_scratch1;
 
   assert_different_registers(src, dst, count, R11_tmp, noreg);
@@ -110,10 +95,11 @@ void ShenandoahBarrierSetAssembler::arraycopy_prologue(MacroAssembler *masm, Dec
 
   // Fast path: No barrier required if for every barrier type, it is either disabled or would not store
   // any useful information.
-  if ((!ShenandoahSATBBarrier || dest_uninitialized) && !ShenandoahIUBarrier && !ShenandoahLoadRefBarrier) {
+  if ((!ShenandoahSATBBarrier || dest_uninitialized) && !ShenandoahLoadRefBarrier) {
     return;
   }
 
+  __ block_comment("arraycopy_prologue (shenandoahgc) {");
   Label skip_prologue;
 
   // Fast path: Array is of length zero.
@@ -185,6 +171,16 @@ void ShenandoahBarrierSetAssembler::arraycopy_prologue(MacroAssembler *masm, Dec
 
   __ bind(skip_prologue);
   __ block_comment("} arraycopy_prologue (shenandoahgc)");
+}
+
+void ShenandoahBarrierSetAssembler::arraycopy_epilogue(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
+                                                       Register dst, Register count,
+                                                       Register preserve) {
+  if (ShenandoahCardBarrier && is_reference_type(type)) {
+    __ block_comment("arraycopy_epilogue (shenandoahgc) {");
+    gen_write_ref_array_post_barrier(masm, decorators, dst, count, preserve);
+    __ block_comment("} arraycopy_epilogue (shenandoahgc)");
+  }
 }
 
 // The to-be-enqueued value can either be determined
@@ -582,8 +578,28 @@ void ShenandoahBarrierSetAssembler::load_at(
 
   /* ==== Apply keep-alive barrier, if required (e.g., to inhibit weak reference resurrection) ==== */
   if (ShenandoahBarrierSet::need_keep_alive_barrier(decorators, type)) {
-    iu_barrier(masm, dst, tmp1, tmp2, preservation_level);
+    if (ShenandoahSATBBarrier) {
+      __ block_comment("keep_alive_barrier (shenandoahgc) {");
+      satb_write_barrier_impl(masm, 0, noreg, noreg, dst, tmp1, tmp2, preservation_level);
+      __ block_comment("} keep_alive_barrier (shenandoahgc)");
+    }
   }
+}
+
+void ShenandoahBarrierSetAssembler::store_check(MacroAssembler* masm, Register base, RegisterOrConstant ind_or_offs, Register tmp) {
+  assert(ShenandoahCardBarrier, "Should have been checked by caller");
+  assert_different_registers(base, tmp, R0);
+
+  if (ind_or_offs.is_constant()) {
+    __ add_const_optimized(base, base, ind_or_offs.as_constant(), tmp);
+  } else {
+    __ add(base, ind_or_offs.as_register(), base);
+  }
+
+  __ ld(tmp, in_bytes(ShenandoahThreadLocalData::card_table_offset()), R16_thread); /* tmp = *[R16_thread + card_table_offset] */
+  __ srdi(base, base, CardTable::card_shift());
+  __ li(R0, CardTable::dirty_card_val());
+  __ stbx(R0, tmp, base);
 }
 
 // base:        Base register of the reference's address.
@@ -597,10 +613,6 @@ void ShenandoahBarrierSetAssembler::store_at(MacroAssembler *masm, DecoratorSet 
     if (ShenandoahSATBBarrier) {
       satb_write_barrier(masm, base, ind_or_offs, tmp1, tmp2, tmp3, preservation_level);
     }
-
-    if (ShenandoahIUBarrier && val != noreg) {
-      iu_barrier(masm, val, tmp1, tmp2, preservation_level, decorators);
-    }
   }
 
   BarrierSetAssembler::store_at(masm, decorators, type,
@@ -608,6 +620,11 @@ void ShenandoahBarrierSetAssembler::store_at(MacroAssembler *masm, DecoratorSet 
                                 val,
                                 tmp1, tmp2, tmp3,
                                 preservation_level);
+
+  // No need for post barrier if storing NULL
+  if (ShenandoahCardBarrier && is_reference_type(type) && val != noreg) {
+    store_check(masm, base, ind_or_offs, tmp1);
+  }
 }
 
 void ShenandoahBarrierSetAssembler::try_resolve_jobject_in_native(MacroAssembler *masm,
@@ -755,6 +772,41 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler *masm, Register b
 
   __ bind(done);
   __ block_comment("} cmpxchg_oop (shenandoahgc)");
+}
+
+void ShenandoahBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssembler* masm, DecoratorSet decorators,
+                                                                     Register addr, Register count, Register preserve) {
+  assert(ShenandoahCardBarrier, "Should have been checked by caller");
+
+  ShenandoahBarrierSet* bs = ShenandoahBarrierSet::barrier_set();
+  CardTable* ct = bs->card_table();
+  assert_different_registers(addr, count, R0);
+
+  Label L_skip_loop, L_store_loop;
+
+  __ sldi_(count, count, LogBytesPerHeapOop);
+
+  // Zero length? Skip.
+  __ beq(CCR0, L_skip_loop);
+
+  __ addi(count, count, -BytesPerHeapOop);
+  __ add(count, addr, count);
+  // Use two shifts to clear out those low order two bits! (Cannot opt. into 1.)
+  __ srdi(addr, addr, CardTable::card_shift());
+  __ srdi(count, count, CardTable::card_shift());
+  __ subf(count, addr, count);
+  __ ld(R0, in_bytes(ShenandoahThreadLocalData::card_table_offset()), R16_thread);
+  __ add(addr, addr, R0);
+  __ addi(count, count, 1);
+  __ li(R0, 0);
+  __ mtctr(count);
+
+  // Byte store loop
+  __ bind(L_store_loop);
+  __ stb(R0, 0, addr);
+  __ addi(addr, addr, 1);
+  __ bdnz(L_store_loop);
+  __ bind(L_skip_loop);
 }
 
 #undef __
