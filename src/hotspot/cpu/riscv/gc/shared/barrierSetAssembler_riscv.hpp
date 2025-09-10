@@ -34,8 +34,7 @@
 
 enum class NMethodPatchingType {
   stw_instruction_and_data_patch,
-  conc_instruction_and_data_patch,
-  conc_data_patch
+  conc_instruction_and_data_patch
 };
 
 class BarrierSetAssembler: public CHeapObj<mtGC> {
