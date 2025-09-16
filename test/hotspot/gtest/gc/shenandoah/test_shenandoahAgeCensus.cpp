@@ -21,6 +21,7 @@
  * questions.
  *
  */
+#include "precompiled.hpp"
 
 #include "gc/shenandoah/shenandoahAgeCensus.hpp"
 #include "unittest.hpp"
