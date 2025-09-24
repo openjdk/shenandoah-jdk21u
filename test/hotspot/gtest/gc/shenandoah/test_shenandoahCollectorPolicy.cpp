@@ -22,6 +22,8 @@
  *
  */
 
+#include "precompiled.hpp"
+
 #include "gc/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "unittest.hpp"
 
